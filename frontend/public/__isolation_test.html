@@ -1,0 +1,292 @@
+ <!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <title>isolation-test</title>
+  </head>
+  <body>
+    <div id="out">running</div>
+    <script>
+      const logs = [];
+      const out = document.getElementById('out');
+      function log(msg) {
+        logs.push(msg);
+        out.textContent = logs.join(' || ');
+      }
+      function check(name, ok, extra) {
+        log((ok ? 'PASS ' : 'FAIL ') + name + (extra ? ' :: ' + extra : ''));
+      }
+
+      async function setUser(username) {
+        const { api } = await import('/src/api/client.ts');
+        const res = await api.auth.login({ username, password: username });
+        if (!res || !res.token) throw new Error('login failed for ' + username);
+        localStorage.setItem('invoice_keeper_token', res.token);
+        localStorage.setItem('invoice_keeper_user', JSON.stringify(res.user));
+      }
+
+      async function run() {
+        const { api } = await import('/src/api/client.ts');
+
+        /* ---------- 1. each user sees only their own payments ---------- */
+        await setUser('ivan');
+        const ivanList = await api.occurrences.list();
+        await setUser('anna');
+        const annaList = await api.occurrences.list();
+
+        check(
+          'isolation: у ivan и anna разные наборы платежей',
+          ivanList.length !== annaList.length ||
+            ivanList.some((o) => !annaList.some((a) => a.id === o.id)),
+          'ivan=' + ivanList.length + ' anna=' + annaList.length,
+        );
+        check(
+          'isolation: у всех платежей ivan свой user_id',
+          ivanList.every((o) => o.user_id === 'user-2'),
+          [...new Set(ivanList.map((o) => o.user_id))].join(','),
+        );
+        check(
+          'isolation: у всех платежей anna свой user_id',
+          annaList.every((o) => o.user_id === 'user-3'),
+          [...new Set(annaList.map((o) => o.user_id))].join(','),
+        );
+        const ivanNames = [...new Set(ivanList.map((o) => o.name))].sort();
+        const annaNames = [...new Set(annaList.map((o) => o.name))].sort();
+        check(
+          'isolation: ivan не видит платежи, назначенные только anna',
+          !ivanNames.includes('Домен и SSL'),
+          'ivan=' + ivanNames.join('|'),
+        );
+        check(
+          'isolation: anna не видит платежи, назначенные только ivan',
+          !annaNames.includes('Аренда офиса'),
+          'anna=' + annaNames.join('|'),
+        );
+        check(
+          'isolation: общий платёж есть у обоих',
+          ivanNames.includes('Подписка Figma') && annaNames.includes('Подписка Figma'),
+        );
+
+        /* ---------- 2. ivan's action does not touch anna's data ---------- */
+        await setUser('ivan');
+        const ivanTarget = (await api.occurrences.list()).find(
+          (o) => o.status !== 'paid',
+        );
+        const annaBefore = await (async () => {
+          await setUser('anna');
+          return api.occurrences.list();
+        })();
+
+        await setUser('ivan');
+        await api.occurrences.update(ivanTarget.id, {
+          status: 'paid',
+          actual_payment_date: new Date().toISOString(),
+        });
+
+        const annaAfter = await (async () => {
+          await setUser('anna');
+          return api.occurrences.list();
+        })();
+        const annaChanged = annaAfter.filter((a, i) => {
+          const before = annaBefore[i];
+          return before && (a.status !== before.status || a.actual_payment_date !== before.actual_payment_date);
+        });
+        check(
+          'isolation: оплата ivan не изменила ни одного платежа anna',
+          annaChanged.length === 0,
+          'changed=' + annaChanged.length,
+        );
+
+        /* ---------- 3. anna cannot edit ivan's period ---------- */
+        await setUser('anna');
+        let blocked = false;
+        try {
+          await api.occurrences.update(ivanTarget.id, { status: 'unpaid' });
+        } catch (e) {
+          blocked = true;
+        }
+        check('isolation: anna не может изменить период ivan', blocked);
+
+        const ivanStillPaid = await (async () => {
+          await setUser('ivan');
+          const list = await api.occurrences.list();
+          return list.find((o) => o.id === ivanTarget.id);
+        })();
+        check(
+          'isolation: период ivan остался оплаченным',
+          ivanStillPaid.status === 'paid',
+          'status=' + ivanStillPaid.status,
+        );
+
+        /* ---------- 4. summaries are per user ---------- */
+        await setUser('ivan');
+        const ivanSummary = await api.summary.get();
+        await setUser('anna');
+        const annaSummary = await api.summary.get();
+        check(
+          'isolation: итоги считаются отдельно для каждого',
+          JSON.stringify(ivanSummary) !== JSON.stringify(annaSummary),
+          'ivan=' + JSON.stringify(ivanSummary) + ' anna=' + JSON.stringify(annaSummary),
+        );
+
+        /* ---------- 5. periods still work per user ---------- */
+        await setUser('ivan');
+        const ivanRent = (await api.occurrences.list()).filter(
+          (o) => o.name === 'Аренда офиса',
+        );
+        check(
+          'periods: у ivan аренда имеет несколько периодов',
+          ivanRent.length >= 2,
+          'count=' + ivanRent.length,
+        );
+        check(
+          'periods: даты периодов различаются',
+          new Set(ivanRent.map((o) => o.due_date)).size === ivanRent.length,
+        );
+        check(
+          'periods: просрочка не останавливает следующие периоды',
+          ivanRent.some((o) => o.status === 'overdue') &&
+            ivanRent.some((o) => o.status !== 'overdue'),
+          ivanRent.map((o) => o.status).join(','),
+        );
+
+        /* ---------- 6. history is per user ---------- */
+        await setUser('ivan');
+        const ivanInternet = (await api.occurrences.list()).filter(
+          (o) => o.name === 'Интернет и связь',
+        );
+        await setUser('anna');
+        const annaInternet = (await api.occurrences.list()).filter(
+          (o) => o.name === 'Интернет и связь',
+        );
+        const ivanPaidIdx = ivanInternet
+          .map((o) => o.status === 'paid' ? 1 : 0)
+          .join('');
+        const annaPaidIdx = annaInternet
+          .map((o) => o.status === 'paid' ? 1 : 0)
+          .join('');
+        check(
+          'history: у каждого своя история оплат по общему платежу',
+          ivanPaidIdx !== annaPaidIdx,
+          'ivan=' + ivanPaidIdx + ' anna=' + annaPaidIdx,
+        );
+
+        /* ---------- 7. admin sees all payments ---------- */
+        await setUser('admin');
+        const adminList = await api.occurrences.list();
+        check(
+          'admin: администратор видит все платежи',
+          adminList.length >= ivanList.length && adminList.length >= annaList.length,
+          'admin=' + adminList.length,
+        );
+        const adminRp = await api.recurringPayments.list();
+        check(
+          'admin: администратор видит все регулярные платежи',
+          adminRp.length >= 4,
+          'count=' + adminRp.length,
+        );
+        check(
+          'admin: у регулярного платежа есть список назначенных',
+          adminRp.every((r) => Array.isArray(r.assigned_user_ids)),
+        );
+
+        /* ---------- 8. creating a payment with explicit assignees ---------- */
+        await setUser('admin');
+        const created = await api.recurringPayments.create({
+          name: 'Только для anna',
+          amount: 700,
+          currency: 'EUR',
+          next_payment_date: new Date(Date.now() + 10 * 86400000).toISOString(),
+          periodicity: 'monthly',
+          assigned_user_ids: ['user-3'],
+        });
+        check(
+          'assign: платёж назначен anna',
+          created.assigned_user_ids.length === 1 && created.assigned_user_ids[0] === 'user-3',
+          JSON.stringify(created.assigned_user_ids),
+        );
+
+        await setUser('ivan');
+        const ivanAfterCreate = await api.occurrences.list();
+        check(
+          'assign: ivan не видит платёж, назначенный только anna',
+          !ivanAfterCreate.some((o) => o.name === 'Только для anna'),
+        );
+        await setUser('anna');
+        const annaAfterCreate = await api.occurrences.list();
+        check(
+          'assign: anna видит назначенный ей платёж',
+          annaAfterCreate.some((o) => o.name === 'Только для anna'),
+        );
+
+        /* ---------- 9. adding a payment does not wipe other statuses ---------- */
+        await setUser('ivan');
+        const ivanBeforeCreate = await api.occurrences.list();
+        const paidBefore = new Map(
+          ivanBeforeCreate
+            .filter((o) => o.status === 'paid')
+            .map((o) => [o.id, o.actual_payment_date]),
+        );
+        await setUser('admin');
+        const extraPayment = await api.recurringPayments.create({
+          name: 'Ещё один',
+          amount: 100,
+          currency: 'RUB',
+          next_payment_date: new Date(Date.now() + 20 * 86400000).toISOString(),
+          periodicity: 'monthly',
+          assigned_user_ids: ['user-2'],
+        });
+        await setUser('ivan');
+        const ivanLedgerAfterCreate = await api.occurrences.list();
+        const paidAfter = new Map(
+          ivanLedgerAfterCreate
+            .filter((o) => o.status === 'paid')
+            .map((o) => [o.id, o.actual_payment_date]),
+        );
+        const missing = [...paidBefore.keys()].filter((id) => !paidAfter.has(id));
+        const dateDiff = [...paidBefore.entries()].filter(
+          ([id, date]) => paidAfter.has(id) && paidAfter.get(id) !== date,
+        );
+        const newPeriods = ivanLedgerAfterCreate.filter(
+          (o) => o.recurring_payment_id === extraPayment.id,
+        );
+        const newPeriodsUnpaid = newPeriods.every((o) => o.status === 'unpaid');
+        check(
+          'history: добавление платежа не стирает оплаты ivan',
+          missing.length === 0 && dateDiff.length === 0 && newPeriodsUnpaid,
+          'missing=' + missing.join(',') +
+            ' dateDiff=' + dateDiff.length +
+            ' newPeriods=' + newPeriods.length +
+            ' newUnpaid=' + newPeriodsUnpaid +
+            ' beforeIds=' + [...paidBefore.keys()].join(',') +
+            ' afterIds=' + [...paidAfter.keys()].join(','),
+        );
+
+        /* ---------- 10. deleting keeps history ---------- */
+        await setUser('admin');
+        const rps = await api.recurringPayments.list();
+        const rent = rps.find((r) => r.name === 'Аренда офиса');
+        await setUser('ivan');
+        const rentBefore = (await api.occurrences.list()).filter(
+          (o) => o.name === 'Аренда офиса',
+        );
+        await setUser('admin');
+        await api.recurringPayments.remove(rent.id);
+        await setUser('ivan');
+        const rentAfter = (await api.occurrences.list()).filter(
+          (o) => o.name === 'Аренда офиса',
+        );
+        check(
+          'delete: история ivan сохранена после удаления платежа',
+          rentAfter.length === rentBefore.length &&
+            rentAfter.filter((o) => o.status === 'paid').length ===
+              rentBefore.filter((o) => o.status === 'paid').length,
+          'before=' + rentBefore.length + ' after=' + rentAfter.length,
+        );
+
+        document.title = 'done';
+      }
+      run().catch((e) => log('THREW ' + e.message + ' | ' + (e.stack || '')));
+    </script>
+  </body>
+</html>
