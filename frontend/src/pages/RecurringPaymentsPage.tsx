@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { FileUp, Plus, Trash2 } from 'lucide-react';
 import { api } from '@/api/client';
 import type { Currency, PaymentCategory, Periodicity, RecurringPayment, User } from '@/api/types';
 import { CURRENCIES, PAYMENT_CATEGORY_LABELS, PERIODICITIES, PERIODICITY_LABELS } from '@/api/types';
 import { useAsyncResource } from '@/hooks/useAsyncResource';
 import { formatAmount, formatDate, fromDateInputValue, todayDateInputValue } from '@/lib/date';
+import { CsvImportModal } from '@/components/CsvImportModal';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -53,6 +54,8 @@ export function RecurringPaymentsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [importNotice, setImportNotice] = useState<string | null>(null);
 
   const payments = useAsyncResource<RecurringPayment[]>(() => api.recurringPayments.list(), []);
   const users = useAsyncResource<User[]>(() => api.users.list(), []);
@@ -205,10 +208,38 @@ export function RecurringPaymentsPage() {
             Список платежей, которые будут начисляться ежемесячно
           </p>
         </div>
-        <Button onClick={openModal} leftIcon={<Plus className="h-4 w-4" aria-hidden="true" />}>
-          Добавить платеж
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setImportNotice(null);
+              setIsImportOpen(true);
+            }}
+            leftIcon={<FileUp className="h-4 w-4" aria-hidden="true" />}
+          >
+            Импорт из CSV
+          </Button>
+          <Button onClick={openModal} leftIcon={<Plus className="h-4 w-4" aria-hidden="true" />}>
+            Добавить платеж
+          </Button>
+        </div>
       </div>
+
+      {importNotice ? (
+        <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700" role="status">
+          {importNotice}
+        </div>
+      ) : null}
+
+      <CsvImportModal
+        isOpen={isImportOpen}
+        onClose={() => setIsImportOpen(false)}
+        knownUsernames={assignableUsers.map((user) => user.username)}
+        onImported={(count) => {
+          setImportNotice(`Импортировано платежей: ${count}`);
+          payments.refresh();
+        }}
+      />
 
       {actionError ? (
         <div

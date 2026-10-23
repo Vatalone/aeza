@@ -7,6 +7,10 @@ import { CURRENCIES, STATUS_LABELS } from '@/api/types';
 import { useAsyncResource } from '@/hooks/useAsyncResource';
 import { attentionCount, downloadCsv } from '@/lib/finance';
 import { formatAmount, formatDate, fromDateInputValue, todayDateInputValue } from '@/lib/date';
+import { useSettingsStore } from '@/store/settings';
+import type { BudgetPeriod } from '@/store/settings';
+import { CashFlowWidget } from '@/components/CashFlowWidget';
+import { PlanningOverview } from '@/components/PlanningOverview';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
@@ -67,6 +71,9 @@ export function DashboardPage() {
   const [query, setQuery] = useState('');
   const [category] = useState<PaymentCategory | 'all'>('all');
   const [attentionOnly, setAttentionOnly] = useState(false);
+  const timeZone = useSettingsStore((state) => state.timeZone);
+  const [asOf, setAsOf] = useState<string>(() => todayDateInputValue(timeZone));
+  const [budgetPeriod, setBudgetPeriod] = useState<BudgetPeriod>('month');
 
   const summary = useAsyncResource<Summary>(() => api.summary.get(), []);
   const occurrences = useAsyncResource<PaymentOccurrence[]>(() => api.occurrences.list(), []);
@@ -253,6 +260,21 @@ export function DashboardPage() {
           </div>
         )}
       </section>
+
+      {occurrences.isLoading ? (
+        <div className="card h-64 animate-pulse bg-gray-50" aria-hidden="true" />
+      ) : occurrences.error ? null : (
+        <div className="grid gap-6 xl:grid-cols-2">
+          <PlanningOverview
+            occurrences={rows}
+            asOf={asOf}
+            onAsOfChange={setAsOf}
+            period={budgetPeriod}
+            onPeriodChange={setBudgetPeriod}
+          />
+          <CashFlowWidget occurrences={rows} asOf={asOf} />
+        </div>
+      )}
 
       <section aria-label="Платежи">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

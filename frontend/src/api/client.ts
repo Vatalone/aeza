@@ -1,6 +1,7 @@
 import {
   MOCK_TOKEN_PREFIX,
   mockCreateRecurringPayment,
+  mockImportRecurringPayments,
   mockCreateUser,
   mockDeleteRecurringPayment,
   mockDeleteUser,
@@ -14,8 +15,11 @@ import {
   mockUpdateUser,
 } from './mock';
 import type {
+  BudgetPlan,
   BulkOccurrenceUpdatePayload,
   CreateRecurringPaymentPayload,
+  CsvImportRow,
+  Currency,
   CreateUserPayload,
   LoginPayload,
   LoginResponse,
@@ -25,6 +29,7 @@ import type {
   PaymentOccurrence,
   RecurringPayment,
   Summary,
+  SummaryQuery,
   UpdateOccurrencePayload,
   UpdateRecurringPaymentPayload,
   UpdateUserPayload,
@@ -258,6 +263,24 @@ export const api = {
         },
         () => mockDeleteRecurringPayment(id),
       ),
+
+    /**
+     * Creates many recurring payments in one transaction.
+     * Backend contract: `POST /recurring-payments/import` with `{ rows }`,
+     * responds with the created payments. Rows are validated client-side
+     * first, the server must validate them again.
+     */
+    importBatch: async (rows: CsvImportRow[]): Promise<RecurringPayment[]> =>
+      withMock(
+        async () => {
+          const response = await request<RecurringPayment[]>('/recurring-payments/import', {
+            method: 'POST',
+            body: JSON.stringify({ rows }),
+          });
+          return Array.isArray(response) ? response : [];
+        },
+        () => mockImportRecurringPayments(rows),
+      ),
   },
 
   occurrences: {
@@ -311,10 +334,20 @@ export const api = {
   },
 
   summary: {
-    get: async (): Promise<Summary> =>
+    /**
+     * Totals per currency. With `as_of_date` the server returns the totals
+     * known on that day (payments confirmed later count as unpaid).
+     */
+    get: async (query?: SummaryQuery): Promise<Summary> =>
       withMock(
         async () => {
-          const response = await request<Summary>('/payments/summary', { method: 'GET' });
+          const response = await request<Summary>(
+            '/payments/summary',
+            { method: 'GET' },
+            query
+              ? { as_of_date: query.as_of_date, from_date: query.from_date, to_date: query.to_date }
+              : undefined,
+          );
           return {
             RUB: Number(response?.RUB ?? 0),
             USD: Number(response?.USD ?? 0),
@@ -323,6 +356,21 @@ export const api = {
         },
         () => mockGetSummary(mockResolveUser(getAuthToken())),
       ),
+  },
+
+  budgets: {
+    /** Backend contract: `GET /budgets?as_of_date=` → `BudgetPlan[]`. */
+    list: async (asOfDate?: string): Promise<BudgetPlan[]> =>
+      request<BudgetPlan[]>('/budgets', { method: 'GET' }, { as_of_date: asOfDate }),
+    /** Backend contract: `PUT /budgets/{currency}`. */
+    update: async (
+      currency: Currency,
+      payload: { monthly_limit?: number; yearly_limit?: number },
+    ): Promise<BudgetPlan> =>
+      request<BudgetPlan>(`/budgets/${currency}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }),
   },
 
   users: {
@@ -368,12 +416,5 @@ export const api = {
       ),
   },
 };
-
-export async function bulkUpdateOccurrences(payload: BulkOccurrenceUpdatePayload): Promise<PaymentOccurrence[]> {
-  return request<PaymentOccurrence[]>('/payment-occurrences/bulk', {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  });
-}
 
 export type Api = typeof api;

@@ -3,6 +3,7 @@ import { DEFAULT_TIMEZONE } from '@/lib/date';
 import { create } from 'zustand';
 
 export type Theme = 'light' | 'system';
+export type BudgetPeriod = 'month' | 'year';
 
 export interface BudgetSettings {
   RUB: number;
@@ -25,9 +26,14 @@ interface SettingsState {
   weeklyDigestEnabled: boolean;
   theme: Theme;
   budget: BudgetSettings;
+  yearlyBudget: BudgetSettings;
+  budgetPeriod: BudgetPeriod;
+  cashBalance: BudgetSettings;
   activity: ActivityEntry[];
-  setSettings: (patch: Partial<Omit<SettingsState, 'activity' | 'setSettings' | 'addActivity' | 'resetSettings'>>) => void;
+  setSettings: (patch: Partial<Omit<SettingsState, 'activity' | 'setSettings' | 'addActivity' | 'resetSettings' | 'setBudget' | 'setCashBalance'>>) => void;
   setBudget: (currency: Currency, value: number) => void;
+  setYearlyBudget: (currency: Currency, value: number) => void;
+  setCashBalance: (currency: Currency, value: number) => void;
   addActivity: (action: string, details: string) => void;
   resetSettings: () => void;
 }
@@ -40,7 +46,10 @@ const DEFAULT_SETTINGS = {
   notificationsEnabled: true,
   weeklyDigestEnabled: false,
   theme: 'light' as Theme,
+  budgetPeriod: 'month' as BudgetPeriod,
   budget: { RUB: 100000, USD: 500, EUR: 500 },
+  yearlyBudget: { RUB: 1_200_000, USD: 6_000, EUR: 6_000 },
+  cashBalance: { RUB: 150000, USD: 1000, EUR: 1000 },
   activity: [] as ActivityEntry[],
 };
 
@@ -55,6 +64,8 @@ function readSettings(): typeof DEFAULT_SETTINGS {
       ...DEFAULT_SETTINGS,
       ...parsed,
       budget: { ...DEFAULT_SETTINGS.budget, ...parsed.budget },
+      yearlyBudget: { ...DEFAULT_SETTINGS.yearlyBudget, ...parsed.yearlyBudget },
+      cashBalance: { ...DEFAULT_SETTINGS.cashBalance, ...parsed.cashBalance },
       activity: Array.isArray(parsed.activity) ? parsed.activity.slice(0, 100) : [],
     };
   } catch {
@@ -62,7 +73,7 @@ function readSettings(): typeof DEFAULT_SETTINGS {
   }
 }
 
-function persist(state: Pick<SettingsState, 'reminderLeadDays' | 'timeZone' | 'displayCurrency' | 'notificationsEnabled' | 'weeklyDigestEnabled' | 'theme' | 'budget' | 'activity'>): void {
+function persist(state: Pick<SettingsState, 'reminderLeadDays' | 'timeZone' | 'displayCurrency' | 'notificationsEnabled' | 'weeklyDigestEnabled' | 'theme' | 'budgetPeriod' | 'budget' | 'yearlyBudget' | 'cashBalance' | 'activity'>): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
@@ -78,6 +89,20 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setBudget: (currency, value) => {
     set((state) => {
       const next = { ...state, budget: { ...state.budget, [currency]: Math.max(0, value) } };
+      persist(next);
+      return next;
+    });
+  },
+  setYearlyBudget: (currency, value) => {
+    set((state) => {
+      const next = { ...state, yearlyBudget: { ...state.yearlyBudget, [currency]: Math.max(0, value) } };
+      persist(next);
+      return next;
+    });
+  },
+  setCashBalance: (currency, value) => {
+    set((state) => {
+      const next = { ...state, cashBalance: { ...state.cashBalance, [currency]: Math.max(0, value) } };
       persist(next);
       return next;
     });

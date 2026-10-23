@@ -13,6 +13,17 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    build: {
+      rollupOptions: {
+        output: {
+          // Chart.js is loaded only by the dashboard/analytics pages.
+          manualChunks: (id) =>
+            id.includes('node_modules/chart.js') || id.includes('node_modules/react-chartjs-2')
+              ? 'charts'
+              : undefined,
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),

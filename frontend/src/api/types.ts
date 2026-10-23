@@ -86,6 +86,43 @@ export interface Summary {
   EUR: number;
 }
 
+export interface SummaryQuery {
+  as_of_date?: string;
+  from_date?: string;
+  to_date?: string;
+}
+
+export interface BudgetPlan {
+  currency: Currency;
+  monthly_limit: number;
+  yearly_limit: number;
+  spent_month: number;
+  spent_year: number;
+  remaining_month: number;
+  remaining_year: number;
+}
+
+export interface CsvImportRow {
+  name: string;
+  amount: number;
+  currency: Currency;
+  next_payment_date: string;
+  periodicity: Periodicity;
+  assigned_usernames?: string[];
+  category?: PaymentCategory;
+  notes?: string;
+}
+
+export interface CsvImportError {
+  row: number;
+  message: string;
+}
+
+export interface CsvImportPreview {
+  valid_rows: CsvImportRow[];
+  errors: CsvImportError[];
+}
+
 export interface LoginResponse {
   token: string;
   user: User;

@@ -21,6 +21,7 @@
 import type {
   CreateRecurringPaymentPayload,
   CreateUserPayload,
+  CsvImportRow,
   Currency,
   PaymentOccurrence,
   PaymentStatus,
@@ -492,6 +493,34 @@ export function mockCreateRecurringPayment(
  * Stops a recurring payment. Its periods are kept, so the payment history
  * stays visible — only new periods are no longer generated.
  */
+/**
+ * Creates every row as a recurring payment. The whole batch is validated
+ * first, so either all rows are created or none (transaction semantics).
+ */
+export function mockImportRecurringPayments(rows: CsvImportRow[]): RecurringPayment[] {
+  const resolved = rows.map((row, index) => {
+    const ids = (row.assigned_usernames ?? []).map((username) => {
+      const user = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+      if (!user) throw new Error(`Строка ${index + 1}: неизвестный пользователь «${username}»`);
+      return user.id;
+    });
+    return { row, ids };
+  });
+
+  return resolved.map(({ row, ids }) =>
+    mockCreateRecurringPayment({
+      name: row.name,
+      amount: row.amount,
+      currency: row.currency,
+      next_payment_date: row.next_payment_date,
+      periodicity: row.periodicity,
+      category: row.category,
+      notes: row.notes,
+      assigned_user_ids: ids,
+    }),
+  );
+}
+
 export function mockDeleteRecurringPayment(id: string): void {
   const payment = recurringPayments.find((rp) => rp.id === id);
   if (!payment) throw new Error('Платёж не найден');
